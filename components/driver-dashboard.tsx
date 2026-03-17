@@ -23,6 +23,7 @@ import {
 import { db } from "@/lib/firebase"
 import { collection, query, where, getDocs, doc, updateDoc, increment, addDoc, serverTimestamp, orderBy, limit, onSnapshot, Timestamp } from "firebase/firestore"
 import { useDriverMode } from "@/lib/driver-mode-context"
+import { useAuth } from "@/lib/auth-context"
 import { BrowserMultiFormatReader, NotFoundException } from "@zxing/library"
 
 const FARE_OPTIONS = [
@@ -103,6 +104,7 @@ function saveDailyStats(stats: DailyStats): void {
 
 export function DriverDashboard() {
   const { exitDriverMode } = useDriverMode()
+  const { session } = useAuth()
   const [selectedFare, setSelectedFare] = useState(30)
   const [isScanning, setIsScanning] = useState(false)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
@@ -122,6 +124,7 @@ export function DriverDashboard() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const gpsWatchIdRef = useRef<number | null>(null)
 
   // Stop scanner helper (defined early for cleanup)
   const stopScanner = useCallback(() => {
@@ -141,6 +144,43 @@ export function DriverDashboard() {
     const stats = loadDailyStats()
     setDailyStats(stats)
   }, [])
+
+  // High-frequency real-time GPS tracking
+  useEffect(() => {
+    if (!navigator.geolocation || !session?.phone) return
+
+    const busDocRef = doc(db, "Buses", session.phone)
+
+    gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords
+        try {
+          await updateDoc(busDocRef, {
+            latitude,
+            longitude,
+            lastUpdated: serverTimestamp(),
+          })
+        } catch (error) {
+          console.error("GPS Firestore update error:", error)
+        }
+      },
+      (error) => {
+        console.error("GPS watch error:", error)
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 5000,
+      }
+    )
+
+    return () => {
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current)
+        gpsWatchIdRef.current = null
+      }
+    }
+  }, [session?.phone])
 
   // Real-time transaction history listener
   useEffect(() => {
