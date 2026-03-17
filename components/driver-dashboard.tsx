@@ -484,6 +484,25 @@ export function DriverDashboard() {
     setScanResult(null)
   }
 
+  // DEV TEST: send a slightly randomised position to Firestore to verify GPS→Firestore path
+  const [testStatus, setTestStatus] = useState<string | null>(null)
+  const handleTestGpsUpdate = useCallback(async () => {
+    if (!session?.phone) { setTestStatus("لا يوجد جلسة"); return }
+    const lat = 35.4200 + (Math.random() - 0.5) * 0.002
+    const lng = 7.1350  + (Math.random() - 0.5) * 0.002
+    try {
+      setTestStatus("جاري الإرسال…")
+      await updateDoc(doc(db, "Buses", session.phone), {
+        latitude: lat,
+        longitude: lng,
+        lastUpdated: serverTimestamp(),
+      })
+      setTestStatus(`✓ تم: ${lat.toFixed(5)}, ${lng.toFixed(5)}`)
+    } catch (e) {
+      setTestStatus(`✗ خطأ: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }, [session?.phone])
+
   return (
     <div className="min-h-screen bg-slate-900">
       {/* Header */}
@@ -718,6 +737,19 @@ export function DriverDashboard() {
             </li>
           </ol>
         </motion.div>
+
+        {/* DEV: GPS connection test — remove after verifying Firestore writes */}
+        <div className="mt-6 flex flex-col items-center gap-1">
+          <button
+            onClick={handleTestGpsUpdate}
+            className="text-xs text-slate-600 underline underline-offset-2 hover:text-slate-400"
+          >
+            اختبار GPS → Firestore
+          </button>
+          {testStatus && (
+            <p className="text-[10px] text-slate-500" dir="ltr">{testStatus}</p>
+          )}
+        </div>
       </main>
 
       {/* Scanner Modal */}
