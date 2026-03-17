@@ -8,11 +8,11 @@ import {
   Shield, LogOut, Bus, Users, Wallet, Search,
   ChevronRight, Loader2, AlertCircle, CheckCircle2,
   Activity, TrendingUp, UserCheck, RefreshCw, X,
-  MapPin, Clock,
+  MapPin, Clock, Megaphone, Radio,
 } from "lucide-react"
 import { db } from "@/lib/firebase"
 import {
-  collection, onSnapshot, doc, updateDoc,
+  collection, onSnapshot, doc, updateDoc, setDoc,
   increment, serverTimestamp,
 } from "firebase/firestore"
 import { useAuth } from "@/lib/auth-context"
@@ -43,12 +43,13 @@ interface BusRecord {
   current_route_id?: string
 }
 
-type Tab = "fleet" | "finance" | "users"
+type Tab = "fleet" | "finance" | "users" | "broadcast"
 
 const TABS: { id: Tab; label: string; icon: typeof Bus }[] = [
   { id: "fleet", label: "الأسطول", icon: Bus },
   { id: "finance", label: "المالية", icon: Wallet },
-  { id: "users", label: "المستخدمون", icon: Users },
+  { id: "users", label: "الأعضاء", icon: Users },
+  { id: "broadcast", label: "البث", icon: Megaphone },
 ]
 
 function timeSince(lastUpdated: BusRecord["lastUpdated"]): string {
@@ -138,7 +139,7 @@ function AdminDashboard({ onExit }: { onExit: () => void }) {
   return (
     <div className="min-h-screen bg-slate-900">
       {/* Fixed Header */}
-      <header className="fixed left-0 right-0 top-0 z-50 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md">
+      <header className="fixed left-0 right-0 z-50 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md transition-[top] duration-300" style={{ top: 'var(--ann-h, 0px)' }}>
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
@@ -159,7 +160,7 @@ function AdminDashboard({ onExit }: { onExit: () => void }) {
         </div>
       </header>
 
-      <main className="px-4 pb-12 pt-20">
+      <main className="px-4 pb-12" style={{ paddingTop: 'calc(5rem + var(--ann-h, 0px))' }}>
         {/* Quick Stats Bar */}
         <motion.div
           className="mb-5 grid grid-cols-3 gap-3"
@@ -197,14 +198,14 @@ function AdminDashboard({ onExit }: { onExit: () => void }) {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-medium transition-all ${
+              className={`flex flex-1 items-center justify-center gap-1 rounded-xl py-2.5 text-xs font-medium transition-all ${
                 activeTab === tab.id
                   ? "bg-primary text-primary-foreground shadow"
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              <tab.icon className="h-4 w-4" />
-              <span>{tab.label}</span>
+              <tab.icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{tab.label}</span>
             </button>
           ))}
         </motion.div>
@@ -225,6 +226,9 @@ function AdminDashboard({ onExit }: { onExit: () => void }) {
           )}
           {activeTab === "users" && (
             <UsersTab key="users" passengers={passengers} loading={loadingUsers} />
+          )}
+          {activeTab === "broadcast" && (
+            <BroadcastTab key="broadcast" />
           )}
         </AnimatePresence>
       </main>
@@ -594,6 +598,161 @@ function UsersTab({ passengers, loading }: { passengers: UserRecord[]; loading: 
             ))}
           </div>
         )}
+      </div>
+    </motion.div>
+  )
+}
+
+const ANNOUNCEMENT_DOC = () => doc(db, "SystemSettings", "announcements")
+const MAX_LEN = 200
+interface AnnDoc { message: string; isActive: boolean }
+
+function BroadcastTab() {
+  const [current, setCurrent] = useState<AnnDoc | null>(null)
+  const [draft, setDraft] = useState("")
+  const [state, setState] = useState<"idle" | "publishing" | "clearing" | "done-pub" | "done-clear" | "error">("idle")
+  const [errMsg, setErrMsg] = useState("")
+
+  useEffect(() => {
+    const unsub = onSnapshot(ANNOUNCEMENT_DOC(), (snap) => {
+      setCurrent(snap.exists() ? (snap.data() as AnnDoc) : null)
+    })
+    return () => unsub()
+  }, [])
+
+  const publish = useCallback(async () => {
+    const msg = draft.trim()
+    if (!msg) return
+    setState("publishing")
+    try {
+      await setDoc(ANNOUNCEMENT_DOC(), { message: msg, isActive: true }, { merge: true })
+      setState("done-pub")
+      setTimeout(() => setState("idle"), 2500)
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : "حدث خطأ")
+      setState("error")
+    }
+  }, [draft])
+
+  const clearAnn = useCallback(async () => {
+    setState("clearing")
+    try {
+      await setDoc(ANNOUNCEMENT_DOC(), { message: "", isActive: false }, { merge: true })
+      setDraft("")
+      setState("done-clear")
+      setTimeout(() => setState("idle"), 2000)
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : "حدث خطأ")
+      setState("error")
+    }
+  }, [])
+
+  const isBusy = state === "publishing" || state === "clearing"
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-4"
+    >
+      {/* Live Status */}
+      <div className={`overflow-hidden rounded-2xl border p-4 ${current?.isActive ? "border-amber-700/50 bg-amber-950/60" : "border-slate-700 bg-slate-800"}`}>
+        <div className="flex items-center gap-3">
+          <motion.div
+            animate={current?.isActive ? { scale: [1, 1.2, 1] } : {}}
+            transition={{ repeat: Infinity, duration: 2 }}
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${current?.isActive ? "bg-amber-500/20" : "bg-slate-700"}`}
+          >
+            <Radio className={`h-5 w-5 ${current?.isActive ? "text-amber-400" : "text-slate-500"}`} />
+          </motion.div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-white">
+              {current?.isActive ? "البث نشط الآن" : "لا يوجد بث نشط"}
+            </p>
+            {current?.isActive && current.message ? (
+              <p className="mt-0.5 truncate text-xs text-amber-300">"{current.message}"</p>
+            ) : (
+              <p className="mt-0.5 text-xs text-slate-500">الشريط مخفي عن جميع المستخدمين</p>
+            )}
+          </div>
+          {current?.isActive && (
+            <span className="flex items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-1 text-xs font-semibold text-amber-400">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+              مباشر
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Compose */}
+      <div className="rounded-2xl bg-slate-800 p-4">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-white">
+          <Megaphone className="h-4 w-4 text-amber-400" />
+          إنشاء إعلان عالمي
+        </h3>
+        <p className="mb-4 text-xs text-slate-500">
+          يظهر فوراً لجميع المستخدمين في شريط ثابت أعلى الشاشة.
+        </p>
+
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.slice(0, MAX_LEN))}
+          placeholder="مثال: ثلوج في خنشلة — تأخر في جميع الخطوط. ابقوا بأمان."
+          rows={3}
+          dir="rtl"
+          className="mb-1 w-full resize-none rounded-xl bg-slate-700 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-amber-600/50"
+        />
+        <div className="mb-4 flex justify-between text-[10px] text-slate-600">
+          <span>{MAX_LEN - draft.length} حرف متبقٍ</span>
+          <span>{draft.length}/{MAX_LEN}</span>
+        </div>
+
+        <AnimatePresence>
+          {(state === "done-pub" || state === "done-clear" || state === "error") && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className={`mb-4 flex items-center gap-2 rounded-xl p-3 text-sm ${state === "error" ? "bg-red-500/20 text-red-400" : "bg-primary/20 text-primary"}`}
+            >
+              {state === "error" ? (
+                <><AlertCircle className="h-4 w-4 shrink-0" />{errMsg}</>
+              ) : state === "done-pub" ? (
+                <><CheckCircle2 className="h-4 w-4 shrink-0" />تم نشر الإعلان بنجاح ✓</>
+              ) : (
+                <><CheckCircle2 className="h-4 w-4 shrink-0" />تم إخفاء الإعلان</>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="flex gap-3">
+          <button
+            onClick={publish}
+            disabled={!draft.trim() || isBusy}
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-amber-600 py-3.5 text-sm font-bold text-white disabled:opacity-50 active:bg-amber-700 transition-colors"
+          >
+            {state === "publishing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Megaphone className="h-4 w-4" />}
+            <span>{state === "publishing" ? "جاري النشر…" : "نشر الإعلان"}</span>
+          </button>
+          <button
+            onClick={clearAnn}
+            disabled={isBusy || (!current?.isActive && !current?.message)}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-slate-700 px-5 py-3.5 text-sm font-medium text-slate-300 disabled:opacity-40 active:bg-slate-600 transition-colors"
+          >
+            {state === "clearing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+            <span>إخفاء</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-700/40 bg-slate-800/40 p-4">
+        <p className="text-xs leading-relaxed text-slate-500">
+          <span className="font-semibold text-slate-400">ملاحظة: </span>
+          الإعلان يُحدَّث فورياً لجميع المستخدمين المتصلين عبر Firestore. يبقى نشطاً حتى تضغط "إخفاء".
+        </p>
       </div>
     </motion.div>
   )

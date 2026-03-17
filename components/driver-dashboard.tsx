@@ -506,7 +506,7 @@ export function DriverDashboard() {
   return (
     <div className="min-h-screen bg-slate-900">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-md border-b border-slate-800">
+      <header className="fixed left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 transition-[top] duration-300" style={{ top: 'var(--ann-h, 0px)' }}>
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
@@ -527,7 +527,7 @@ export function DriverDashboard() {
         </div>
       </header>
 
-      <main className="px-4 pt-20 pb-8">
+      <main className="px-4 pb-8" style={{ paddingTop: 'calc(5rem + var(--ann-h, 0px))' }}>
         {/* Stats Card */}
         <motion.div
           className="mb-6 rounded-2xl bg-gradient-to-br from-primary to-primary/80 p-5"

@@ -36,7 +36,7 @@ export function AppHeader() {
   }
 
   return (
-    <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between p-4">
+    <header className="absolute left-0 right-0 z-10 flex items-center justify-between p-4 transition-[top] duration-300" style={{ top: 'var(--ann-h, 0px)' }}>
       <Sheet open={isOpen} onOpenChange={setIsOpen}>
         <SheetTrigger asChild>
           <Button variant="ghost" size="icon" className="rounded-full bg-card/80 backdrop-blur-sm">

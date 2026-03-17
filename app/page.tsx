@@ -31,7 +31,7 @@ function HomeContent() {
       <main className="min-h-screen bg-background pb-24">
         <AppHeader />
 
-        <div className="pt-16">
+        <div style={{ paddingTop: 'calc(4rem + var(--ann-h, 0px))' }}>
           <MapSection />
         </div>
 
