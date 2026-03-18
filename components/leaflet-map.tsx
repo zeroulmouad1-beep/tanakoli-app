@@ -9,10 +9,19 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css"
 import { db } from "@/lib/firebase"
 import { collection, onSnapshot } from "firebase/firestore"
 import { motion, AnimatePresence } from "framer-motion"
-import { Layers, ChevronDown, Eye, EyeOff, MapPin, Clock, X, Navigation2 } from "lucide-react"
+import { MapPin, Clock, X, Navigation2 } from "lucide-react"
 import { useTheme } from "@/lib/theme-context"
 import { useRouteSubStations } from "@/hooks/use-routes"
 import { useBusSimulation, type SimulatedBus } from "@/lib/bus-simulation"
+import { useRoute } from "@/lib/route-context"
+import {
+  type RouteViewMode,
+  type SelectedRoute,
+  ROUTE_CATEGORIES,
+  urbanRoutePolylines,
+  intercityRoutePolylines,
+  allRoutes,
+} from "@/lib/route-data"
 
 // Tile layer URLs
 const TILE_LAYERS = {
@@ -30,19 +39,9 @@ interface Bus {
   category?: "urban" | "intercity" // Bus type for coloring
 }
 
-type RouteViewMode = "all" | "single"
-type SelectedRoute = string | null
-
 // Khenchela Province center (zoomed out to show municipalities)
 const KHENCHELA_PROVINCE_CENTER: [number, number] = [35.40, 7.15]
 const KHENCHELA_CITY_CENTER: [number, number] = [35.4377, 7.1458]
-
-// Route categories with colors
-const ROUTE_CATEGORIES = {
-  urban: { label: "داخل المدينة", labelEn: "Urban", color: "#00A651" },
-  intercity: { label: "بين البلديات", labelEn: "Inter-city", color: "#3B82F6" },
-  express: { label: "سريع / طلاب", labelEn: "Express", color: "#F59E0B" },
-}
 
 // All main stations in Khenchela city (urban)
 const urbanStations: { position: [number, number]; name: string; nameEn: string; lines: string[]; isMain: boolean; category: "urban" }[] = [
@@ -76,109 +75,6 @@ const intercityStations: { position: [number, number]; name: string; nameEn: str
   { position: [35.4200, 7.0700], name: "مدخل طامزة", nameEn: "Tamza Entrance", municipality: "طامزة", lines: ["K7"], isMain: false, category: "intercity" },
 ]
 
-// Urban route polylines - Green category
-const urbanRoutePolylines: { id: string; coords: [number, number][]; color: string; name: string; category: "urban" }[] = [
-  {
-    id: "01",
-    name: "خط 01 - الجامعة",
-    color: "#00A651",
-    category: "urban",
-    coords: [
-      [35.4420, 7.1380], [35.4400, 7.1420], [35.4377, 7.1458],
-      [35.4400, 7.1550], [35.4330, 7.1520], [35.4350, 7.1350],
-    ]
-  },
-  {
-    id: "02",
-    name: "خط 02 - عين البيضاء",
-    color: "#00A651",
-    category: "urban",
-    coords: [
-      [35.4350, 7.1350], [35.4450, 7.1320], [35.4377, 7.1458],
-      [35.4330, 7.1520], [35.4400, 7.1480],
-    ]
-  },
-  {
-    id: "03",
-    name: "خط 03 - المدينة الجديدة",
-    color: "#00A651",
-    category: "urban",
-    coords: [
-      [35.4290, 7.1400], [35.4310, 7.1430], [35.4377, 7.1458],
-      [35.4400, 7.1550], [35.4400, 7.1480], [35.4350, 7.1350],
-    ]
-  }
-]
-
-// Inter-city route polylines - Blue category
-const intercityRoutePolylines: { id: string; coords: [number, number][]; color: string; name: string; category: "intercity" }[] = [
-  {
-    id: "K1",
-    name: "K1 - خنشلة - قايس",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.4100, 7.1200], [35.3800, 7.0800], [35.3650, 7.0650],
-    ]
-  },
-  {
-    id: "K2",
-    name: "K2 - خنشلة - الشريعة",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.3900, 7.2000], [35.2700, 7.7500], [35.2640, 7.7600],
-    ]
-  },
-  {
-    id: "K3",
-    name: "K3 - خنشلة - ب����حمامة",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.4500, 7.1600], [35.3300, 6.9900],
-    ]
-  },
-  {
-    id: "K4",
-    name: "K4 - خنشلة - ششار",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.4200, 7.1200], [35.3900, 7.0900], [35.3850, 7.0850],
-    ]
-  },
-  {
-    id: "K5",
-    name: "K5 - خنشلة - عين الطويلة",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.4500, 7.1100], [35.4900, 7.0500], [35.5000, 7.0400],
-    ]
-  },
-  {
-    id: "K6",
-    name: "K6 - خنشلة - المحمل",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.4600, 7.1500], [35.5200, 7.2000],
-    ]
-  },
-  {
-    id: "K7",
-    name: "K7 - خنشلة - طامزة",
-    color: "#3B82F6",
-    category: "intercity",
-    coords: [
-      [35.4350, 7.1350], [35.4200, 7.0700], [35.4100, 7.0500],
-    ]
-  },
-]
-
-// All routes combined
-const allRoutes = [...urbanRoutePolylines, ...intercityRoutePolylines]
 
 // Bus Hub Locations for the 35-bus fleet (FIXED STATION-BASED ONLY)
 // Buses ONLY exist at these 4 coordinates - NO line-based distribution
@@ -608,219 +504,6 @@ if (typeof document !== "undefined") {
   }
 }
 
-// Route Controller Component — redesigned as bottom FABs
-function RouteController({
-  viewMode,
-  setViewMode,
-  selectedRoute,
-  setSelectedRoute,
-  onRouteSelect,
-  isDark,
-  etaCardOpen,
-}: {
-  viewMode: RouteViewMode
-  setViewMode: (mode: RouteViewMode) => void
-  selectedRoute: SelectedRoute
-  setSelectedRoute: (route: SelectedRoute) => void
-  onRouteSelect: (routeId: string | null) => void
-  isDark: boolean
-  etaCardOpen: boolean
-}) {
-  const [isExpanded, setIsExpanded] = useState(false)
-  const [showLegend, setShowLegend] = useState(false)
-
-  const bgColor = isDark ? "rgba(15, 23, 42, 0.92)" : "rgba(255, 255, 255, 0.92)"
-  const textColor = isDark ? "#F8FAFC" : "#1a1a1a"
-  const mutedTextColor = isDark ? "#94A3B8" : "#64748b"
-  const borderColor = isDark ? "rgba(71, 85, 105, 0.5)" : "rgba(226, 232, 240, 1)"
-  const hoverBg = isDark ? "rgba(51, 65, 85, 0.7)" : "rgba(241, 245, 249, 0.8)"
-  const activeBg = isDark ? "rgba(34, 197, 94, 0.18)" : "rgba(34, 197, 94, 0.1)"
-
-  const handleRouteClick = (routeId: string) => {
-    if (selectedRoute === routeId) {
-      setSelectedRoute(null)
-      setViewMode("all")
-      onRouteSelect(null)
-    } else {
-      setSelectedRoute(routeId)
-      setViewMode("single")
-      onRouteSelect(routeId)
-    }
-    setIsExpanded(false)
-  }
-
-  const handleShowAll = () => {
-    setSelectedRoute(null)
-    setViewMode("all")
-    onRouteSelect(null)
-    setIsExpanded(false)
-  }
-
-  // Shift FABs up when ETA card is open so they remain clickable above it
-  const fabShift = etaCardOpen ? -228 : 0
-
-  return (
-    <motion.div
-      className="absolute bottom-4 left-0 right-0 z-[1001] px-3"
-      animate={{ y: fabShift }}
-      transition={{ type: "spring", damping: 26, stiffness: 300 }}
-    >
-      {/* Legend panel — floats above Eye FAB */}
-      <AnimatePresence>
-        {showLegend && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.97 }}
-            transition={{ duration: 0.18 }}
-            className="absolute bottom-14 left-0 z-10 rounded-2xl p-3 shadow-2xl"
-            style={{
-              background: bgColor,
-              border: `1px solid ${borderColor}`,
-              backdropFilter: "blur(14px)",
-              WebkitBackdropFilter: "blur(14px)",
-              minWidth: 158,
-              direction: "rtl",
-            }}
-          >
-            <div className="mb-2 flex items-center justify-between gap-4">
-              <span className="text-xs font-bold" style={{ color: textColor }}>دليل الألوان</span>
-              <button onClick={() => setShowLegend(false)} style={{ color: mutedTextColor }}>
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-            <div className="space-y-2">
-              {Object.entries(ROUTE_CATEGORIES).map(([key, { label, color }]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <div className="h-2.5 w-5 flex-shrink-0 rounded-full" style={{ background: color }} />
-                  <span className="text-[11px]" style={{ color: mutedTextColor }}>{label}</span>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Route list panel — floats above Route FAB, opens upward */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 14 }}
-            transition={{ duration: 0.18 }}
-            className="absolute bottom-14 left-14 right-0 z-10 overflow-hidden rounded-2xl shadow-2xl"
-            style={{
-              background: bgColor,
-              border: `1px solid ${borderColor}`,
-              backdropFilter: "blur(14px)",
-              WebkitBackdropFilter: "blur(14px)",
-            }}
-          >
-            <div className="max-h-60 overflow-y-auto p-2" style={{ direction: "rtl" }}>
-              {/* Show All */}
-              <button
-                onClick={handleShowAll}
-                className="mb-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-colors"
-                style={{ background: viewMode === "all" ? activeBg : "transparent", color: viewMode === "all" ? "#22C55E" : textColor }}
-                onMouseEnter={(e) => { if (viewMode !== "all") e.currentTarget.style.background = hoverBg }}
-                onMouseLeave={(e) => { if (viewMode !== "all") e.currentTarget.style.background = "transparent" }}
-              >
-                <Eye className="h-3.5 w-3.5 flex-shrink-0" style={{ color: viewMode === "all" ? "#22C55E" : mutedTextColor }} />
-                <span className="font-semibold">عرض كل الخطوط</span>
-              </button>
-
-              <div className="mx-2 mb-2 h-px" style={{ background: borderColor }} />
-
-              {/* Urban routes */}
-              <p className="mb-1 px-2 text-[10px] font-bold" style={{ color: mutedTextColor }}>داخل المدينة</p>
-              {urbanRoutePolylines.map((route) => (
-                <button
-                  key={route.id}
-                  onClick={() => handleRouteClick(route.id)}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-colors"
-                  style={{ background: selectedRoute === route.id ? activeBg : "transparent", color: selectedRoute === route.id ? "#22C55E" : textColor }}
-                  onMouseEnter={(e) => { if (selectedRoute !== route.id) e.currentTarget.style.background = hoverBg }}
-                  onMouseLeave={(e) => { if (selectedRoute !== route.id) e.currentTarget.style.background = "transparent" }}
-                >
-                  <div className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ background: ROUTE_CATEGORIES.urban.color, boxShadow: selectedRoute === route.id ? `0 0 0 2px ${ROUTE_CATEGORIES.urban.color}40` : "none" }} />
-                  <span className={selectedRoute === route.id ? "font-bold" : "font-medium"}>خط {route.id}</span>
-                </button>
-              ))}
-
-              {/* Intercity routes */}
-              <p className="mb-1 mt-2 px-2 text-[10px] font-bold" style={{ color: mutedTextColor }}>بين البلديات</p>
-              {intercityRoutePolylines.map((route) => (
-                <button
-                  key={route.id}
-                  onClick={() => handleRouteClick(route.id)}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-colors"
-                  style={{ background: selectedRoute === route.id ? "rgba(59,130,246,0.15)" : "transparent", color: selectedRoute === route.id ? "#3B82F6" : textColor }}
-                  onMouseEnter={(e) => { if (selectedRoute !== route.id) e.currentTarget.style.background = hoverBg }}
-                  onMouseLeave={(e) => { if (selectedRoute !== route.id) e.currentTarget.style.background = "transparent" }}
-                >
-                  <div className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ background: ROUTE_CATEGORIES.intercity.color, boxShadow: selectedRoute === route.id ? `0 0 0 2px ${ROUTE_CATEGORIES.intercity.color}40` : "none" }} />
-                  <span className={selectedRoute === route.id ? "font-bold" : "font-medium"}>{route.name.split(" - ")[1] || route.id}</span>
-                </button>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* FAB row — Eye FAB (left) + Route selector pill (flex-1) */}
-      <div className="flex items-center gap-2" style={{ direction: "ltr" }}>
-        {/* Eye / Legend toggle FAB */}
-        <motion.button
-          whileTap={{ scale: 0.92 }}
-          onClick={() => setShowLegend((v) => !v)}
-          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full shadow-xl"
-          style={{
-            background: showLegend ? "rgba(34,197,94,0.18)" : bgColor,
-            border: showLegend ? "1px solid rgba(34,197,94,0.45)" : `1px solid ${borderColor}`,
-            backdropFilter: "blur(14px)",
-            WebkitBackdropFilter: "blur(14px)",
-          }}
-        >
-          {showLegend
-            ? <EyeOff className="h-4 w-4" style={{ color: "#22C55E" }} />
-            : <Eye className="h-4 w-4" style={{ color: textColor }} />}
-        </motion.button>
-
-        {/* Route selector pill */}
-        <motion.button
-          whileTap={{ scale: 0.98 }}
-          onClick={() => setIsExpanded((v) => !v)}
-          className="flex h-11 flex-1 items-center justify-between rounded-2xl px-4 shadow-xl"
-          style={{
-            background: isExpanded ? "rgba(34,197,94,0.1)" : bgColor,
-            border: isExpanded ? "1px solid rgba(34,197,94,0.38)" : `1px solid ${borderColor}`,
-            backdropFilter: "blur(14px)",
-            WebkitBackdropFilter: "blur(14px)",
-            direction: "rtl",
-          }}
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <Layers className="h-4 w-4 flex-shrink-0" style={{ color: "#22C55E" }} />
-            <span className="truncate text-sm font-semibold" style={{ color: textColor }}>
-              {viewMode === "all" ? "كل الخطوط" : `خط ${selectedRoute}`}
-            </span>
-            {selectedRoute && (
-              <div className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: selectedRoute.startsWith("K") ? "#3B82F6" : "#22C55E" }} />
-            )}
-          </div>
-          <motion.span
-            animate={{ rotate: isExpanded ? 180 : 0 }}
-            transition={{ duration: 0.18 }}
-            className="flex flex-shrink-0"
-          >
-            <ChevronDown className="h-4 w-4" style={{ color: mutedTextColor }} />
-          </motion.span>
-        </motion.button>
-      </div>
-    </motion.div>
-  )
-}
 
 interface LeafletMapProps {
   trackingLineId?: string | null
@@ -841,9 +524,8 @@ export default function LeafletMap({ trackingLineId }: LeafletMapProps) {
   const subStationMarkersRef = useRef<Map<string, L.Marker>>(new Map())
   const { isDark } = useTheme()
   
-  // Route viewing state
-  const [viewMode, setViewMode] = useState<RouteViewMode>("all")
-  const [selectedRoute, setSelectedRoute] = useState<SelectedRoute>(null)
+  // Route viewing state — shared via RouteContext
+  const { viewMode, setViewMode, selectedRoute, setSelectedRoute, registerRouteHandler } = useRoute()
   
   // Get sub-stations for selected route
 const { subStations } = useRouteSubStations(selectedRoute)
@@ -922,6 +604,11 @@ const { subStations } = useRouteSubStations(selectedRoute)
       }
     }
   }, [])
+
+  // Register handleRouteSelect with the shared RouteContext so RouteController outside the map can trigger it
+  useEffect(() => {
+    registerRouteHandler(handleRouteSelect)
+  }, [handleRouteSelect, registerRouteHandler])
 
   // Handle tracking from props
   useEffect(() => {
@@ -1579,15 +1266,6 @@ const marker = L.marker(subStation.coords, {
         )}
       </AnimatePresence>
 
-<RouteController
-  viewMode={viewMode}
-  setViewMode={setViewMode}
-  selectedRoute={selectedRoute}
-  setSelectedRoute={setSelectedRoute}
-  onRouteSelect={handleRouteSelect}
-  isDark={isDark}
-  etaCardOpen={!!selectedBus}
-  />
     </div>
   )
 }
