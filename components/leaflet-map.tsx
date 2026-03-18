@@ -9,7 +9,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css"
 import { db } from "@/lib/firebase"
 import { collection, onSnapshot } from "firebase/firestore"
 import { motion, AnimatePresence } from "framer-motion"
-import { Layers, ChevronDown, ChevronUp, Eye, EyeOff, MapPin } from "lucide-react"
+import { Layers, ChevronDown, ChevronUp, Eye, EyeOff, MapPin, Clock, X, Navigation2 } from "lucide-react"
 import { useTheme } from "@/lib/theme-context"
 import { useRouteSubStations } from "@/hooks/use-routes"
 import { useBusSimulation, type SimulatedBus } from "@/lib/bus-simulation"
@@ -313,6 +313,18 @@ function generateFleetBuses(): Bus[] {
 
 // Generate the static fleet (35 buses total)
 const FLEET_BUSES = generateFleetBuses()
+
+// Haversine straight-line distance in km between two GPS coordinates
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371
+  const toRad = (x: number) => (x * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
 // Inject styles
 if (typeof document !== "undefined") {
@@ -857,6 +869,11 @@ const { subStations } = useRouteSubStations(selectedRoute)
   // Track if map is ready for rendering markers
   const [mapReady, setMapReady] = useState(false)
 
+  // Passenger geolocation — fallback to Khenchela city center
+  const [passengerLatLng, setPassengerLatLng] = useState<[number, number]>(KHENCHELA_CITY_CENTER)
+  // Bus selected by the passenger (triggers ETA card)
+  const [selectedBusId, setSelectedBusId] = useState<string | null>(null)
+
   // Handle route selection from controller
   const handleRouteSelect = useCallback((routeId: string | null) => {
     const map = mapRef.current
@@ -930,6 +947,15 @@ const { subStations } = useRouteSubStations(selectedRoute)
     const newUrl = isDark ? TILE_LAYERS.dark : TILE_LAYERS.light
     tileLayerRef.current.setUrl(newUrl)
   }, [isDark])
+
+  // Request passenger's GPS once on mount; fall back to Khenchela center on denial
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setPassengerLatLng([pos.coords.latitude, pos.coords.longitude]),
+      () => {}
+    )
+  }, [])
 
   // Real-time listener for Firebase buses (live GPS from Driver App)
   // Falls back gracefully - fleet buses will still render if Firebase fails
@@ -1210,7 +1236,39 @@ L.marker(KHENCHELA_CITY_CENTER, { icon: currentLocationIcon })
     
     return { movingBuses: moving, staticBuses: staticFiltered }
   }, [simulatedBuses, buses, fleetBuses, selectedRoute])
-  
+
+  // All buses combined (for ETA lookup by id)
+  const allCurrentBuses = useMemo(
+    () => [...movingBuses, ...staticBuses],
+    [movingBuses, staticBuses]
+  )
+
+  // Find the currently selected bus (re-derives from latest positions)
+  const selectedBus = useMemo(
+    () => (selectedBusId ? allCurrentBuses.find((b) => b.id === selectedBusId) ?? null : null),
+    [selectedBusId, allCurrentBuses]
+  )
+
+  // Compute distance and ETA whenever selected bus position or passenger location changes
+  const etaInfo = useMemo(() => {
+    if (!selectedBus) return null
+    const distKm = haversineKm(
+      passengerLatLng[0], passengerLatLng[1],
+      selectedBus.latitude, selectedBus.longitude
+    )
+    const distM = distKm * 1000
+    const speedKmh = 30 // average city speed
+    const etaMin = Math.round((distKm / speedKmh) * 60)
+    const isArriving = distM < 100
+    const routeName =
+      "lineName" in selectedBus
+        ? (selectedBus as SimulatedBus).lineName
+        : selectedBus.current_route_id
+          ? allRoutes.find((r) => r.id === selectedBus.current_route_id)?.name ?? null
+          : null
+    return { distKm, distM, etaMin, isArriving, routeName }
+  }, [selectedBus, passengerLatLng])
+
   // Helper function to get bus icon - ALWAYS 24px bus icons (no small dots)
   // All buses are displayed as clickable 24px bus icons regardless of zoom level
   const getBusIcon = useCallback((bus: Bus | SimulatedBus) => {
@@ -1347,7 +1405,6 @@ const marker = L.marker(subStation.coords, {
         // Smooth position update
         existingMarker.setLatLng([bus.latitude, bus.longitude])
         existingMarker.setIcon(busIcon)
-        existingMarker.setPopupContent(popupContent)
       } else {
         // Create new marker directly on map (NOT in cluster)
         const marker = L.marker([bus.latitude, bus.longitude], { 
@@ -1355,7 +1412,7 @@ const marker = L.marker(subStation.coords, {
           zIndexOffset: 500 // Above clusters
         })
           .addTo(map)
-          .bindPopup(popupContent)
+          .on("click", () => setSelectedBusId(bus.id))
         
         busMarkersRef.current.set(bus.id, marker)
       }
@@ -1406,7 +1463,7 @@ const marker = L.marker(subStation.coords, {
       const marker = L.marker([bus.latitude, bus.longitude], { 
         icon: busIcon,
       })
-        .bindPopup(popupContent)
+        .on("click", () => setSelectedBusId(bus.id))
       
       cluster.addLayer(marker)
       fleetMarkersRef.current.set(bus.id, marker)
@@ -1416,6 +1473,118 @@ const marker = L.marker(subStation.coords, {
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
+
+      {/* ETA Info Card — slides up from bottom when a bus is selected */}
+      <AnimatePresence>
+        {selectedBus && etaInfo && (
+          <motion.div
+            key="eta-card"
+            initial={{ y: 120, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 120, opacity: 0 }}
+            transition={{ type: "spring", damping: 24, stiffness: 320 }}
+            className="absolute bottom-4 left-3 right-3 z-[1000] overflow-hidden rounded-2xl shadow-2xl"
+            style={{
+              background: "rgba(15, 23, 42, 0.96)",
+              border: "1px solid rgba(71, 85, 105, 0.6)",
+              backdropFilter: "blur(12px)",
+              direction: "rtl",
+            }}
+          >
+            {/* Green top accent bar */}
+            <div className="h-0.5 w-full" style={{ background: "linear-gradient(90deg, #22C55E, #16A34A)" }} />
+
+            <div className="px-4 pt-3 pb-4">
+              {/* Header row: bus name + close */}
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div
+                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full"
+                    style={{ background: selectedBus.category === "intercity" ? "rgba(59,130,246,0.2)" : "rgba(34,197,94,0.15)", border: selectedBus.category === "intercity" ? "1px solid rgba(59,130,246,0.4)" : "1px solid rgba(34,197,94,0.4)" }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={selectedBus.category === "intercity" ? "#60A5FA" : "#22C55E"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M8 6v6"/><path d="M16 6v6"/><path d="M2 12h20"/>
+                      <rect x="4" y="3" width="16" height="18" rx="2"/>
+                      <circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>
+                    </svg>
+                  </div>
+                  <span className="truncate text-sm font-bold text-white">
+                    {"name" in selectedBus ? selectedBus.name : `حافلة ${selectedBus.id}`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSelectedBusId(null)}
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-colors"
+                  style={{ background: "rgba(71,85,105,0.4)" }}
+                >
+                  <X className="h-3.5 w-3.5 text-slate-300" />
+                </button>
+              </div>
+
+              {/* Divider */}
+              <div className="mb-3 h-px" style={{ background: "rgba(71,85,105,0.4)" }} />
+
+              {etaInfo.isArriving ? (
+                /* Arriving now banner */
+                <motion.div
+                  animate={{ scale: [1, 1.02, 1] }}
+                  transition={{ repeat: Infinity, duration: 1.5 }}
+                  className="flex items-center justify-center gap-2 rounded-xl py-3"
+                  style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)" }}
+                >
+                  <span className="text-base font-bold" style={{ color: "#22C55E" }}>الحافلة تقترب</span>
+                  <span className="text-lg">🚍</span>
+                </motion.div>
+              ) : (
+                /* Distance + ETA row */
+                <div className="flex items-stretch gap-3">
+                  {/* Distance */}
+                  <div
+                    className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl py-3"
+                    style={{ background: "rgba(30,41,59,0.7)", border: "1px solid rgba(71,85,105,0.35)" }}
+                  >
+                    <Navigation2 className="h-4 w-4" style={{ color: "#94A3B8" }} />
+                    <span className="text-[11px] text-slate-400">المسافة</span>
+                    <span className="text-base font-bold text-white">
+                      {etaInfo.distKm >= 1
+                        ? `${etaInfo.distKm.toFixed(1)} كم`
+                        : `${Math.round(etaInfo.distM)} م`}
+                    </span>
+                  </div>
+
+                  {/* ETA */}
+                  <div
+                    className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl py-3"
+                    style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)" }}
+                  >
+                    <Clock className="h-4 w-4" style={{ color: "#22C55E" }} />
+                    <span className="text-[11px] text-slate-400">وقت الوصول</span>
+                    <span className="text-base font-bold" style={{ color: "#22C55E" }}>
+                      {etaInfo.etaMin < 1 ? "أقل من دقيقة" : `${etaInfo.etaMin} دق`}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Route label */}
+              {etaInfo.routeName && (
+                <div className="mt-2.5 flex items-center gap-1.5">
+                  <MapPin className="h-3 w-3 flex-shrink-0 text-slate-500" />
+                  <span className="truncate text-[11px] text-slate-400">{etaInfo.routeName}</span>
+                </div>
+              )}
+
+              {/* Speed assumption note */}
+              {!etaInfo.isArriving && (
+                <p className="mt-1.5 text-center text-[10px] text-slate-600">
+                  تقدير بناءً على سرعة متوسطة 30 كم/س
+                </p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
 <RouteController
   viewMode={viewMode}
   setViewMode={setViewMode}
